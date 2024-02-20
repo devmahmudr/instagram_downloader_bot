@@ -19,6 +19,8 @@ bot.on(message("text"), async (ctx) => {
   let platformUrl = "";
   let apiHost = "";
   let platform = "";
+  let videoId = ""
+
 
   const url = ctx.update.message.text;
   const isValidUrl = url.startsWith("https");
@@ -29,9 +31,17 @@ bot.on(message("text"), async (ctx) => {
     platform = "instagram";
     platformUrl = process.env.INSTAGRAM;
     apiHost = process.env.INSTAGRAM_HOST;
-  } else if (url.startsWith("https://www.tiktok.com/")) {
-    platformUrl = process.env.TIKTOK;
-    apiHost = process.env.TIKTOK_HOST;
+  } else if (url.startsWith("https://www.youtube.com/")) {
+    platformUrl = process.env.YOUTUBE;
+    apiHost = process.env.YOUTUBE_HOST;
+    function getYouTubeVideoId(url) {
+      const pattern =
+        /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+      const match = url.match(pattern);
+      return match ? match[1] : null;
+    }
+
+     videoId = getYouTubeVideoId(url);
   }
 
   const options = {
@@ -39,43 +49,54 @@ bot.on(message("text"), async (ctx) => {
     url: platformUrl,
     params: {
       url: url,
-      hd: '1'
+      id:videoId
     },
     headers: {
-      "X-RapidAPI-Key": "5c845e0afbmshad04efb05f4cf5ep161576jsnfd86e565db9a",
+      "X-RapidAPI-Key": process.env.APIKEY,
       "X-RapidAPI-Host": apiHost,
     },
   };
+
   try {
     const response = await axios.request(options);
     let videourl;
     if (platform == "instagram") {
       videourl = response.data.video;
     } else {
-      videourl = response.data.play
+      videourl = response.data.formats[1].url;
     }
-    console.log(videourl);
 
-    const loadingvideo = await axios.get(videourl, { responseType: "stream" });
     const videoFileName = `${Date.now()}.mp4`;
 
+    const loadingvideo = await axios.get(videourl, { responseType: "stream" });
     const videoFile = fs.createWriteStream(path.join("public", videoFileName));
-    loadingvideo.data.pipe(videoFile);
+
+    loadingvideo.data.on("data", (chunk) => {
+      videoFile.write(chunk);
+    });
+
+    loadingvideo.data.on("end", () => {
+      videoFile.end();
+    });
+
+    loadingvideo.data.on("error", (err) => {
+      console.error("Error downloading video:", err);
+      ctx.reply("An error occurred while downloading the video.");
+    });
 
     videoFile.on("finish", () => {
       ctx.replyWithVideo({ source: path.join("public", videoFileName) });
       setTimeout(() => {
-        apiHost = "";
-        platformUrl = "";
         fs.unlink(path.join("public", videoFileName), (err) => {
           if (err) {
-            throw new err();
+            console.error("Error deleting file:", err);
           }
         });
       }, 3000);
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error:", error);
+    ctx.reply("An error occurred while processing your request.");
   }
 });
 
